@@ -1,6 +1,7 @@
 package conspiribot
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,7 +176,7 @@ func fetchTitle(url string) string {
 func handleSeen(state *SwarmState, bot *Bot, channel, target string, provider IRCProvider) {
 	var lastSeen string
 	var lastMsg string
-	err := state.DB.QueryRow("SELECT timestamp, message FROM history WHERE sender = ? ORDER BY id DESC LIMIT 1", target).Scan(&lastSeen, &lastMsg)
+	err := state.DB.QueryRow(context.Background(), "SELECT timestamp, message FROM conspiri_history WHERE sender = $1 ORDER BY id DESC LIMIT 1", target).Scan(&lastSeen, &lastMsg)
 	if err != nil {
 		bot.sendTo(channel, fmt.Sprintf("I haven't seen %s.", target), provider)
 		return

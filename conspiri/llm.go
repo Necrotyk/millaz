@@ -2,10 +2,8 @@ package conspiribot
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"strings"
@@ -16,7 +14,7 @@ import (
 
 // GetUserFacts retrieves persistent facts about the specific user
 func GetUserFacts(state *SwarmState, userNick string) string {
-	rows, err := state.DB.Query("SELECT fact FROM user_facts WHERE user_nick = ?", userNick)
+	rows, err := state.DB.Query(context.Background(), "SELECT fact FROM conspiri_user_facts WHERE user_nick = $1", userNick)
 	if err != nil {
 		return ""
 	}
@@ -96,16 +94,15 @@ func ExtractFacts(state *SwarmState, user, message string) {
 
 	// Generate embedding for the fact
 	embedding, err := GetEmbedding(key, cleanFact)
-	var embedBlob []byte
+	var embedBlob string
 	if err == nil {
-		embedBlob = float32ToByte(embedding)
+		var strs []string
+		for _, f := range embedding {
+			strs = append(strs, fmt.Sprintf("%f", f))
+		}
+		embedBlob = "[" + strings.Join(strs, ",") + "]"
 	}
 
-	// Submit to DB queue
-	// We need to pass the db pointer to the queue function? No, `ExtractFacts` has `db`.
-	// But `ExtractFacts` is in `llm.go` and `dbQueue` is in `database.go` (if exported) or via a helper.
-	// I need to export `dbQueue` or provide a `SaveUserFact` function in `database.go`.
-	// I'll create `SaveUserFact` in `database.go` for cleaner separation.
 	SaveUserFact(state, user, cleanFact, embedBlob)
 }
 
@@ -352,39 +349,4 @@ func integrateUsername(reply, user, botNick string) string {
 		return reply
 	}
 	return fmt.Sprintf(p, user, reply)
-}
-
-// --- Helper functions for Embeddings ---
-
-func float32ToByte(f []float32) []byte {
-	buf := make([]byte, len(f)*4)
-	for i, v := range f {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
-	}
-	return buf
-}
-
-// cosineSimilarityFromBytes calculates cosine similarity directly from a byte slice (LE float32)
-// to avoid allocation and redundant magnitude calculation.
-func cosineSimilarityFromBytes(query []float32, queryMag float32, targetBytes []byte) float32 {
-	if len(targetBytes)%4 != 0 {
-		return 0.0
-	}
-	n := len(targetBytes) / 4
-	if n != len(query) {
-		return 0.0
-	}
-
-	var dot, magB float32
-	// Iterate over target bytes as float32s
-	for i := 0; i < n; i++ {
-		val := math.Float32frombits(binary.LittleEndian.Uint32(targetBytes[i*4:]))
-		dot += query[i] * val
-		magB += val * val
-	}
-
-	if queryMag == 0 || magB == 0 {
-		return 0.0
-	}
-	return dot / (queryMag * float32(math.Sqrt(float64(magB))))
 }

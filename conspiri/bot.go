@@ -94,6 +94,16 @@ func (b *Bot) recordSpeak() {
 
 // ProcessMessage handles an incoming IRC message from Millaz
 func ProcessMessage(sender, channel, message string, provider IRCProvider) {
+	bots := AllBots()
+	if len(bots) == 0 {
+		return
+	}
+	state := bots[0].State
+
+	if !state.Limiter.Allow(sender) {
+		return
+	}
+
 	// Deduplicated receive log (only first of near-simultaneous receives will print)
 	LogReceived(sender, message)
 

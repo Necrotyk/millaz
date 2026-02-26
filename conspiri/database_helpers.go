@@ -1,17 +1,25 @@
 package conspiribot
 
 import (
+	"context"
 	"fmt"
-	"time"
 )
 
 // SaveUserFact inserts a new fact into the user_facts table via the serialized queue
-func SaveUserFact(state *SwarmState, user, fact string, embedding []byte) {
+func SaveUserFact(state *SwarmState, user, fact string, embedding string) {
 	state.DBQueue <- func() {
-		_, err := state.DB.Exec("INSERT OR IGNORE INTO user_facts (user_nick, fact, created_at, embedding) VALUES (?, ?, ?, ?)",
-			user, fact, time.Now().Format(time.RFC3339), embedding)
-		if err != nil {
-			fmt.Printf("[Memory] DB Error: %v\n", err)
+		if embedding != "" {
+			_, err := state.DB.Exec(context.Background(), "INSERT INTO conspiri_user_facts (user_nick, fact, created_at, embedding) VALUES ($1, $2, NOW(), $3::vector) ON CONFLICT (user_nick, fact) DO NOTHING",
+				user, fact, embedding)
+			if err != nil {
+				fmt.Printf("[Memory] DB Error: %v\n", err)
+			}
+		} else {
+			_, err := state.DB.Exec(context.Background(), "INSERT INTO conspiri_user_facts (user_nick, fact, created_at) VALUES ($1, $2, NOW()) ON CONFLICT (user_nick, fact) DO NOTHING",
+				user, fact)
+			if err != nil {
+				fmt.Printf("[Memory] DB Error: %v\n", err)
+			}
 		}
 	}
 }

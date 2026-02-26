@@ -10,7 +10,7 @@ import (
 	"index/suffixarray"
 	"log"
 	"math/rand"
-	"milla/conspiribot"
+	conspiribot "milla/conspiri"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -905,10 +905,18 @@ func runIRC(appConfig TomlConfig) {
 	go LoadAllEventPlugins(&appConfig, irc)
 
 	if appConfig.DatabaseAddress != "" {
-		context, cancel := context.WithTimeout(context.Background(), time.Duration(appConfig.RequestTimeout)*time.Second)
+		dbCtx, cancel := context.WithTimeout(context.Background(), time.Duration(appConfig.RequestTimeout)*time.Second)
 		defer cancel()
 
-		go connectToDB(&appConfig, &context, irc)
+		go func() {
+			connectToDB(&appConfig, &dbCtx, irc)
+			if len(appConfig.Conspiribot.Bots) > 0 && appConfig.pool != nil {
+				_, err := conspiribot.Init(context.Background(), appConfig.pool, appConfig.Apikey, &appConfig.Conspiribot)
+				if err != nil {
+					log.Printf("Failed to initialize Conspiribot: %v", err)
+				}
+			}
+		}()
 	}
 
 	if len(appConfig.ScrapeChannels) > 0 {
@@ -1013,17 +1021,6 @@ func main() {
 	_, err = toml.Decode(string(data), &config)
 	if err != nil {
 		LogErrorFatal(err)
-	}
-
-	// Initialize Conspiribot once if configured
-	for _, v := range config.Ircd {
-		if len(v.Conspiribot.Bots) > 0 {
-			_, err := conspiribot.Init(context.Background(), "swarm.db", v.Apikey, &v.Conspiribot)
-			if err != nil {
-				log.Printf("Failed to initialize Conspiribot: %v", err)
-			}
-			break
-		}
 	}
 
 	for key, value := range config.Ircd {

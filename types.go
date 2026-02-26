@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"log"
-	"milla/conspiribot"
+	conspiribot "milla/conspiri"
 	"runtime"
 	"time"
 

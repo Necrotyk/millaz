@@ -1,6 +1,7 @@
 package conspiribot
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -9,7 +10,7 @@ import (
 // and stores the compact summary in the memory_summaries table.
 func SummarizeAndStore(state *SwarmState, botNick string) error {
 	// fetch up to 100 recent memory entries
-	rows, err := state.DB.Query(`SELECT content FROM memory WHERE bot_nick = ? ORDER BY id DESC LIMIT 100`, botNick)
+	rows, err := state.DB.Query(context.Background(), `SELECT content FROM conspiri_memory WHERE bot_nick = $1 ORDER BY id DESC LIMIT 100`, botNick)
 	if err != nil {
 		return err
 	}
@@ -84,11 +85,11 @@ func SummarizeAndStore(state *SwarmState, botNick string) error {
 func pruneOldMemory(state *SwarmState, botNick string, keep int) error {
 	// find the id threshold: select id from memory where bot_nick = ? order by id desc limit 1 offset keep-1
 	var thresholdID int
-	row := state.DB.QueryRow(`SELECT id FROM memory WHERE bot_nick = ? ORDER BY id DESC LIMIT 1 OFFSET ?`, botNick, keep-1)
+	row := state.DB.QueryRow(context.Background(), `SELECT id FROM conspiri_memory WHERE bot_nick = $1 ORDER BY id DESC LIMIT 1 OFFSET $2`, botNick, keep-1)
 	if err := row.Scan(&thresholdID); err != nil {
 		// nothing to prune
 		return nil
 	}
-	_, err := state.DB.Exec(`DELETE FROM memory WHERE bot_nick = ? AND id < ?`, botNick, thresholdID)
+	_, err := state.DB.Exec(context.Background(), `DELETE FROM conspiri_memory WHERE bot_nick = $1 AND id < $2`, botNick, thresholdID)
 	return err
 }
