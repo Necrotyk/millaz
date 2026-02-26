@@ -10,6 +10,7 @@ import (
 	"index/suffixarray"
 	"log"
 	"math/rand"
+	"milla/conspiribot"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -763,6 +764,20 @@ func WatchListHandler(irc *girc.Client, appConfig TomlConfig) {
 	})
 }
 
+type GircProvider struct {
+	client *girc.Client
+}
+
+func (p GircProvider) SendPrivmsg(channel, message string) error {
+	p.client.Cmd.Message(channel, message)
+	return nil
+}
+
+func (p GircProvider) SendAction(channel, message string) error {
+	p.client.Cmd.Action(channel, message)
+	return nil
+}
+
 func runIRC(appConfig TomlConfig) {
 	var OllamaMemory []MemoryElement
 
@@ -837,6 +852,16 @@ func runIRC(appConfig TomlConfig) {
 		for _, channel := range appConfig.IrcChannels {
 			IrcJoin(irc, channel)
 		}
+	})
+
+	irc.Handlers.AddBg(girc.PRIVMSG, func(client *girc.Client, event girc.Event) {
+		sender := event.Source.Name
+		target := event.Params[0]
+		message := event.Last()
+
+		// Inject conspiribot
+		provider := GircProvider{client: client}
+		conspiribot.ProcessMessage(sender, target, message, provider)
 	})
 
 	switch appConfig.Provider {
@@ -988,6 +1013,17 @@ func main() {
 	_, err = toml.Decode(string(data), &config)
 	if err != nil {
 		LogErrorFatal(err)
+	}
+
+	// Initialize Conspiribot once if configured
+	for _, v := range config.Ircd {
+		if len(v.Conspiribot.Bots) > 0 {
+			_, err := conspiribot.Init(context.Background(), "swarm.db", v.Apikey, &v.Conspiribot)
+			if err != nil {
+				log.Printf("Failed to initialize Conspiribot: %v", err)
+			}
+			break
+		}
 	}
 
 	for key, value := range config.Ircd {

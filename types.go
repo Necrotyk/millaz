@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"milla/conspiribot"
 	"runtime"
 	"time"
 
@@ -142,9 +143,10 @@ type TomlConfig struct {
 	Out                           bool                        `toml:"out"`
 	AdminOnly                     bool                        `toml:"adminOnly"`
 	pool                          *pgxpool.Pool
-	Admins                        []string   `toml:"admins"`
-	IrcChannels                   [][]string `toml:"ircChannels"`
-	ScrapeChannels                [][]string `toml:"scrapeChannels"`
+	Admins                        []string           `toml:"admins"`
+	IrcChannels                   [][]string         `toml:"ircChannels"`
+	ScrapeChannels                [][]string         `toml:"scrapeChannels"`
+	Conspiribot                   conspiribot.Config `toml:"conspiribot"`
 }
 
 func (config *TomlConfig) insertLState(
