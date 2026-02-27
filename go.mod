@@ -10,6 +10,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.16.0
 	github.com/cenkalti/backoff/v5 v5.0.2
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
+	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/ergochat/irc-go v0.4.0
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/kohkimakimoto/gluayaml v0.0.0-20160815032708-6fe413d49d73

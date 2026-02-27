@@ -28,6 +28,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/cenkalti/backoff/v5"
+	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lrstanley/girc"
@@ -1062,6 +1063,17 @@ func main() {
 			logger.Error("profiler server exited", "error", err)
 		}()
 	}
+
+	go func() {
+		interval, err := daemon.SdWatchdogEnabled(false)
+		if err != nil || interval == 0 {
+			return
+		}
+		ticker := time.NewTicker(interval / 2)
+		for range ticker.C {
+			daemon.SdNotify(false, daemon.SdNotifyWatchdog)
+		}
+	}()
 
 	<-quitChannel
 }
