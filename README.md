@@ -1,3 +1,25 @@
+# milla (Zero-Trust ConspiriBot Edition)
+
+*This fork/deployment contains extensive architectural hardening and experimental AI context optimization for high-availability Swarm operations.*
+
+## Recent Architectural Additions
+
+### Context Caching State Machine (TTFT Optimization)
+- **Lazy Evaluation Mutex:** Thread-safe execution wrapper across LLM API bindings reducing cache stampedes.
+- **Dedicated Caching Tracking:** Uses PostgreSQL `conspiri_cache_state` mapping dynamic context TTL metrics securely preventing race conditions during daemon failures.
+- **API Cached Payload Scaling:** Offloads `SystemInstruction` and structural conversational parameters cleanly through the `google.golang.org/genai` cached payload REST specifications natively.
+
+### Reliability & Telemetry Hardening
+- **LLM API Circuit Breaker:** Exponential back-off triggers upon sustained Google API failures protecting background generator threads. If rolling limits drop above local thresholds, the node gracefully silences affected array clusters.
+- **Structured JSON Event Ingress:`log/slog`:** Raw formatted standard logging is routed directly into Linux host kernel boundaries (`systemd-journald`) removing `log.Printf` IO blockers.
+- **UDS Service Segregation:** Migrated internal net/http `/debug/pprof` endpoints away from TCP mapping fully over zero-trust Unix Domain Sockets (`/run/millaz/telemetry.sock`) regulated via strict systemd ACLs natively tracking heap/goroutine stack allocations anonymously.
+- **HNSW Vector Indexing:** Background Goroutines silently purge rows extending 30 days to mitigate disk exhaustion, dynamically creating HNSW pgvector indices resolving heavy IO operations on $N$ geometric dimensions.
+
+### Utility Egress & Sandbox Parsing
+- **HTTP Payload Sanitization:** Extracted direct text token mapping isolating pure DOM outputs wrapped with explicit memory 1MB limits removing the threat of decompression zip bombs crashing active parsing environments reliably resolving internal memory vulnerabilities natively.
+
+---
+
 # milla
 
 Milla is an IRC bot that:
