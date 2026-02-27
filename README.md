@@ -367,6 +367,85 @@ milla: /cyberSecurityDigest
 
 ## Deploy
 
+### Zero-Trust Systemd Setup (ConspiriBot)
+
+The ConspiriBot deployment utilizes zero-trust architecture, dropping privileges, restricting access, and utilizing UDS (Unix Domain Sockets) for internal IPC and telemetry.
+
+**1. Create Service User & Directories**
+```bash
+sudo useradd -M -r -s /bin/false millaz
+sudo mkdir -p /opt/millaz/db
+```
+
+**2. Compile & Install**
+For local execution or a Debian-based VM, compile strictly with `CGO_ENABLED` (for PostgreSQL `pgvector` dependencies) and install:
+```bash
+CGO_ENABLED=1 go build -ldflags="-s -w" -o millaz-daemon .
+sudo cp millaz-daemon /opt/millaz/
+sudo cp config.toml /opt/millaz/
+sudo chown -R millaz:millaz /opt/millaz
+```
+
+*Note on Void Linux (musl):* If cross-compiling, use the explicit musl toolchain:
+```bash
+CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ GOARCH=amd64 GOOS=linux CGO_ENABLED=1 go build -ldflags="-linkmode external -extldflags '-static' -s -w" -o millaz-daemon-musl .
+```
+
+**3. Configure Systemd Service**
+Create `/etc/systemd/system/millaz.service` applying zero-trust primitives:
+```ini
+[Unit]
+Description=Millaz IRC Swarm Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=millaz
+Group=millaz
+ExecStart=/opt/millaz/millaz-daemon -config /opt/millaz/config.toml -prof
+WorkingDirectory=/opt/millaz
+
+# Zero-Trust Hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/millaz/db
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Unix sockets and UDS Binding
+RuntimeDirectory=millaz
+RuntimeDirectoryMode=0700
+
+# Telemetry Watchdog & Recovery
+WatchdogSec=60s
+Restart=on-failure
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**4. Activate & Verify Telemetry**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now millaz
+systemctl status millaz
+```
+
+**5. (Optional) Journal Retention Config**
+To prevent disk exhaustion from telemetry output, bind systemd to an aggressive auto-retention policy inside `/etc/systemd/journald.conf.d/millaz.conf`:
+```ini
+[Journal]
+SystemMaxUse=500M
+MaxRetentionSec=1month
+```
+Then restart journals: `sudo systemctl restart systemd-journald`.
+
+---
+
 ### Docker
 
 Images are automatically pushed to dockerhub. So you can get it from [there](https://hub.docker.com/r/terminaldweller/milla).

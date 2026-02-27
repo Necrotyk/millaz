@@ -444,7 +444,7 @@ func GetEmbedding(apiKey, text string) ([]float32, error) {
 		return nil, err
 	}
 
-	if res.Embeddings == nil || len(res.Embeddings) == 0 || len(res.Embeddings[0].Values) == 0 {
+	if len(res.Embeddings) == 0 || len(res.Embeddings[0].Values) == 0 {
 		return nil, fmt.Errorf("no embedding returned")
 	}
 
