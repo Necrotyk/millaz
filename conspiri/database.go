@@ -16,18 +16,21 @@ type CacheEntry struct {
 	Name      string
 	ExpiresAt time.Time
 	Mu        sync.Mutex
+	FailCount int
 }
 
 type SwarmState struct {
-	DB            *pgxpool.Pool
-	DBQueue       chan func()
-	Cancel        context.CancelFunc
-	APIKey        string
-	Config        *Config
-	Limiter       *RateLimiter
-	Wg            *sync.WaitGroup
-	Logger        *slog.Logger
-	CacheRegistry sync.Map // map[string]*CacheEntry
+	DB                  *pgxpool.Pool
+	DBQueue             chan func()
+	Cancel              context.CancelFunc
+	APIKey              string
+	Config              *Config
+	Limiter             *RateLimiter
+	Wg                  *sync.WaitGroup
+	Logger              *slog.Logger
+	CacheRegistry       sync.Map // map[string]*CacheEntry
+	ConsecutiveFailures int
+	FailMu              sync.Mutex
 }
 
 func NewSwarmState(db *pgxpool.Pool, ctx context.Context, apiKey string, config *Config, logger *slog.Logger) *SwarmState {
@@ -179,7 +182,48 @@ func Init(ctx context.Context, pool *pgxpool.Pool, apiKey string, config *Config
 		}
 	}
 
+	go state.memoryCleaner(ctx)
+
 	return state, nil
+}
+
+func (s *SwarmState) memoryCleaner(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Initial run
+	s.runCleanup(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runCleanup(ctx)
+		}
+	}
+}
+
+func (s *SwarmState) runCleanup(ctx context.Context) {
+	// Purge records older than 30 days
+	res, err := s.DB.Exec(ctx, `DELETE FROM conspiri_memory WHERE timestamp < NOW() - INTERVAL '30 days'`)
+	if err != nil {
+		s.Logger.Error("Failed to purge old memory", "error", err)
+	} else if res.RowsAffected() > 0 {
+		s.Logger.Info("Purged old memory", "rows", res.RowsAffected())
+	}
+
+	// Check row count and create HNSW index if > 100,000
+	var count int
+	err = s.DB.QueryRow(ctx, `SELECT reltuples::bigint AS estimate FROM pg_class WHERE relname = 'conspiri_memory'`).Scan(&count)
+	if err == nil && count > 100000 {
+		_, err = s.DB.Exec(ctx, `CREATE INDEX IF NOT EXISTS conspiri_memory_embedding_idx ON conspiri_memory USING hnsw (embedding vector_cosine_ops)`)
+		if err != nil {
+			s.Logger.Error("Failed to create HNSW index", "error", err)
+		} else {
+			s.Logger.Info("Ensured HNSW index exists on conspiri_memory")
+		}
+	}
 }
 
 // float32ArrayToString converts array of float32 to PostgreSQL vector compatible string

@@ -241,12 +241,29 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 	v, ok := state.CacheRegistry.Load(persona.Nick)
 	if ok {
 		entry := v.(*CacheEntry)
+
+		// Circuit breaker bypass check
+		if entry.FailCount >= 3 {
+			backoffMins := time.Duration(15 * (1 << (entry.FailCount - 3)))
+			if backoffMins > 60*time.Minute {
+				backoffMins = 60 * time.Minute
+			}
+			if time.Now().Before(entry.ExpiresAt.Add(backoffMins)) {
+				// We're inside backoff, skip cache creation and attempt standard generation
+				// Notice we use entry.ExpiresAt as the backoff mark. Let's fix this properly.
+				goto skipCache
+			}
+		}
+
 		if time.Now().After(entry.ExpiresAt.Add(-5 * time.Minute)) {
 			if entry.Mu.TryLock() {
+				// Note: reset ExpiresAt here if we wanted to enforce backoff. We will handle inside refreshCache.
 				go refreshCache(context.Background(), state, persona, memory)
 			}
 		} else {
-			cacheName = entry.Name
+			if entry.FailCount == 0 {
+				cacheName = entry.Name
+			}
 		}
 	} else {
 		entry := &CacheEntry{}
@@ -258,21 +275,47 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 			}
 		} else {
 			if time.Now().Before(loadedEntry.ExpiresAt.Add(-5 * time.Minute)) {
-				cacheName = loadedEntry.Name
+				if loadedEntry.FailCount == 0 {
+					cacheName = loadedEntry.Name
+				}
 			} else {
+				if loadedEntry.FailCount >= 3 {
+					backoffMins := time.Duration(15 * (1 << (loadedEntry.FailCount - 3)))
+					if backoffMins > 60*time.Minute {
+						backoffMins = 60 * time.Minute
+					}
+					if time.Now().Before(loadedEntry.ExpiresAt.Add(backoffMins)) {
+						goto skipCache
+					}
+				}
 				if loadedEntry.Mu.TryLock() {
 					go refreshCache(context.Background(), state, persona, memory)
 				}
 			}
 		}
 	}
+skipCache:
 
 	if key != "" {
 		// We send the masked prompt
 		out, err := CallGeminiText(state.Logger, key, model, cacheName, persona, privacy.Mask(sender), maskedPrompt)
 		if err != nil {
 			LogGeminiError(state.Logger, err)
+			state.FailMu.Lock()
+			state.ConsecutiveFailures++
+			if state.ConsecutiveFailures >= 50 {
+				state.Logger.Error("CRITICAL: Consecutive API failure threshold exceeded. Silencing swarm.")
+				for _, b := range AllBots() {
+					b.setEnabled(false)
+				}
+				// Reset to avoid spamming the log if someone unmutes manually later
+				state.ConsecutiveFailures = 0
+			}
+			state.FailMu.Unlock()
 		} else if out != "" {
+			state.FailMu.Lock()
+			state.ConsecutiveFailures = 0
+			state.FailMu.Unlock()
 			// 6. Desanitize Output
 			// The LLM might say "Entity_1 is right". We convert back to "UserA is right".
 			finalReply := privacy.DesanitizeText(out)
@@ -340,6 +383,8 @@ func refreshCache(ctx context.Context, state *SwarmState, persona BotPersona, me
 	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		state.Logger.Error("cache client creation failed", "bot", persona.Nick, "error", err)
+		entry.FailCount++
+		entry.ExpiresAt = time.Now() // set to now so backoff works against this mark
 		return
 	}
 
@@ -361,11 +406,14 @@ func refreshCache(ctx context.Context, state *SwarmState, persona BotPersona, me
 	resp, err := client.Caches.Create(ctx, modelName, req)
 	if err != nil {
 		state.Logger.Error("cache creation failed", "bot", persona.Nick, "error", err)
+		entry.FailCount++
+		entry.ExpiresAt = time.Now()
 		return
 	}
 
 	entry.Name = resp.Name
 	entry.ExpiresAt = time.Now().Add(ttl)
+	entry.FailCount = 0 // reset on success
 
 	_, err = state.DB.Exec(ctx,
 		`INSERT INTO conspiri_cache_state (bot_nick, cache_name, expires_at)

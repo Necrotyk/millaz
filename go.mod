@@ -15,7 +15,6 @@ require (
 	github.com/kohkimakimoto/gluayaml v0.0.0-20160815032708-6fe413d49d73
 	github.com/layeh/gopher-json v0.0.0-20201124131017-552bb3c4c3bf
 	github.com/lrstanley/girc v0.0.0-20250219025855-423afa8a8828
-	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/sashabaranov/go-openai v1.38.1
 	github.com/yuin/gluare v0.0.0-20170607022532-d7c94f1a80ed
