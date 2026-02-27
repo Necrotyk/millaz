@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"index/suffixarray"
 	"log"
+	"log/slog"
 	"math/rand"
 	conspiribot "milla/conspiri"
 	"net"
@@ -778,7 +779,7 @@ func (p GircProvider) SendAction(channel, message string) error {
 	return nil
 }
 
-func runIRC(appConfig TomlConfig) {
+func runIRC(appConfig TomlConfig, logger *slog.Logger) {
 	var OllamaMemory []MemoryElement
 
 	var GeminiMemory []*genai.Content
@@ -911,9 +912,9 @@ func runIRC(appConfig TomlConfig) {
 		go func() {
 			connectToDB(&appConfig, &dbCtx, irc)
 			if len(appConfig.Conspiribot.Bots) > 0 && appConfig.pool != nil {
-				_, err := conspiribot.Init(context.Background(), appConfig.pool, appConfig.Apikey, &appConfig.Conspiribot)
+				_, err := conspiribot.Init(context.Background(), appConfig.pool, appConfig.Apikey, &appConfig.Conspiribot, logger)
 				if err != nil {
-					log.Printf("Failed to initialize Conspiribot: %v", err)
+					logger.Error("Failed to initialize Conspiribot", "error", err)
 				}
 			}
 		}()
@@ -1029,13 +1030,15 @@ func main() {
 		config.Ircd[key] = value
 	}
 
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	for k, v := range config.Ircd {
 		log.Println(k, v)
 	}
 
 	for _, v := range config.Ircd {
 		if v.IrcServer != "" {
-			go runIRC(v)
+			go runIRC(v, logger)
 		} else {
 			log.Println("Could not find server for irc connection in the config file. skipping. check your config for spelling errors maybe.")
 		}
@@ -1047,8 +1050,16 @@ func main() {
 
 	if *prof {
 		go func() {
-			err := http.ListenAndServe(":6060", nil)
-			log.Println(err)
+			sockPath := "/run/millaz/telemetry.sock"
+			os.Remove(sockPath)
+			l, err := net.Listen("unix", sockPath)
+			if err != nil {
+				logger.Error("failed to listen on UDS", "error", err)
+				return
+			}
+			logger.Info("profiler listening", "socket", sockPath)
+			err = http.Serve(l, nil)
+			logger.Error("profiler server exited", "error", err)
 		}()
 	}
 

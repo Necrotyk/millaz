@@ -3,6 +3,7 @@ package conspiribot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +20,10 @@ type SwarmState struct {
 	Config  *Config
 	Limiter *RateLimiter
 	Wg      *sync.WaitGroup
+	Logger  *slog.Logger
 }
 
-func NewSwarmState(db *pgxpool.Pool, ctx context.Context, apiKey string, config *Config) *SwarmState {
+func NewSwarmState(db *pgxpool.Pool, ctx context.Context, apiKey string, config *Config, logger *slog.Logger) *SwarmState {
 	ctx, cancel := context.WithCancel(ctx)
 	s := &SwarmState{
 		DB:      db,
@@ -31,6 +33,7 @@ func NewSwarmState(db *pgxpool.Pool, ctx context.Context, apiKey string, config 
 		Config:  config,
 		Limiter: NewRateLimiter(),
 		Wg:      &sync.WaitGroup{},
+		Logger:  logger,
 	}
 	s.Wg.Add(1)
 	go s.worker(ctx)
@@ -58,7 +61,7 @@ func (s *SwarmState) worker(ctx context.Context) {
 }
 
 // Init initializes the Swarm, the PostgreSQL database and exports a SwarmState
-func Init(ctx context.Context, pool *pgxpool.Pool, apiKey string, config *Config) (*SwarmState, error) {
+func Init(ctx context.Context, pool *pgxpool.Pool, apiKey string, config *Config, logger *slog.Logger) (*SwarmState, error) {
 	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`); err != nil {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
 	}
@@ -130,9 +133,9 @@ func Init(ctx context.Context, pool *pgxpool.Pool, apiKey string, config *Config
 		return nil, err
 	}
 
-	fmt.Println("Database initialized for conspiri.")
+	logger.Info("Database initialized for conspiri.")
 
-	state := NewSwarmState(pool, ctx, apiKey, config)
+	state := NewSwarmState(pool, ctx, apiKey, config, logger)
 
 	// Setup AppConfig global for legacy compatibility
 	AppConfig = config
@@ -184,7 +187,7 @@ func SaveMemory(state *SwarmState, botNick, content, channel string) error {
 			}
 
 			if err != nil {
-				fmt.Printf("[DB] SaveMemory error: %v\n", err)
+				state.Logger.Error("SaveMemory error", "error", err)
 				return
 			}
 
@@ -251,7 +254,7 @@ func SaveSummary(state *SwarmState, botNick, summary string) error {
 	state.DBQueue <- func() {
 		_, err := state.DB.Exec(context.Background(), `INSERT INTO conspiri_memory_summaries(bot_nick, updated_at, summary) VALUES($1, NOW(), $2) ON CONFLICT(bot_nick) DO UPDATE SET updated_at = NOW(), summary = EXCLUDED.summary`, botNick, summary)
 		if err != nil {
-			fmt.Printf("[DB] SaveSummary error: %v\n", err)
+			state.Logger.Error("SaveSummary error", "error", err)
 		}
 	}
 	return nil
@@ -341,7 +344,7 @@ func LogMessage(state *SwarmState, timestamp, sender, message, channel string) e
 	state.DBQueue <- func() {
 		_, err := state.DB.Exec(context.Background(), `INSERT INTO conspiri_history(timestamp, sender, message, channel) VALUES($1, $2, $3, $4)`, timestamp, sender, message, channel)
 		if err != nil {
-			fmt.Printf("[DB] LogMessage error: %v\n", err)
+			state.Logger.Error("LogMessage error", "error", err)
 		}
 	}
 	return nil
@@ -375,7 +378,7 @@ func UpdateReputation(state *SwarmState, nick string, delta int) error {
 	state.DBQueue <- func() {
 		_, err := state.DB.Exec(context.Background(), `INSERT INTO conspiri_reputation(nick, score) VALUES($1, $2) ON CONFLICT(nick) DO UPDATE SET score = conspiri_reputation.score + EXCLUDED.score`, nick, delta)
 		if err != nil {
-			fmt.Printf("[DB] UpdateReputation error: %v\n", err)
+			state.Logger.Error("UpdateReputation error", "error", err)
 		}
 	}
 	return nil

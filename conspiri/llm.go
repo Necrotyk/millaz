@@ -3,7 +3,7 @@ package conspiribot
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"os"
 	"strings"
@@ -77,7 +77,7 @@ func ExtractFacts(state *SwarmState, user, message string) {
 
 	extractorPersona := BotPersona{Nick: "System_Extractor", System: sysPrompt}
 
-	fact, err := CallGeminiText(key, "gemini-2.5-flash-lite", extractorPersona, maskedUser, userPrompt)
+	fact, err := CallGeminiText(state.Logger, key, "gemini-2.5-flash-lite", extractorPersona, maskedUser, userPrompt)
 	if err != nil || fact == "" {
 		return
 	}
@@ -90,7 +90,7 @@ func ExtractFacts(state *SwarmState, user, message string) {
 		return
 	}
 
-	log.Printf("[Memory] Learned fact about %s: %s", user, cleanFact)
+	state.Logger.Info("Learned fact", "user", user, "fact", cleanFact)
 
 	// Generate embedding for the fact
 	embedding, err := GetEmbedding(key, cleanFact)
@@ -239,14 +239,14 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 
 	if key != "" {
 		// We send the masked prompt
-		out, err := CallGeminiText(key, model, persona, privacy.Mask(sender), maskedPrompt)
+		out, err := CallGeminiText(state.Logger, key, model, persona, privacy.Mask(sender), maskedPrompt)
 		if err != nil {
-			LogGeminiError(err)
+			LogGeminiError(state.Logger, err)
 		} else if out != "" {
 			// 6. Desanitize Output
 			// The LLM might say "Entity_1 is right". We convert back to "UserA is right".
 			finalReply := privacy.DesanitizeText(out)
-			log.Printf("Gemini call succeeded for %s (Privacy active)", persona.Nick)
+			state.Logger.Info("Gemini call succeeded", "bot", persona.Nick, "privacy", "active")
 			return finalReply
 		}
 	}
@@ -258,7 +258,7 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 // CallGeminiText calls a Gemini-like REST endpoint. It expects an API key in Bearer form.
 // It returns the generated text or an error. If the environment provides GEMINI_API_URL,
 // that will be used; otherwise a sensible default is attempted (may vary by deployment).
-func CallGeminiText(apiKey, model string, persona BotPersona, sender, prompt string) (string, error) {
+func CallGeminiText(logger *slog.Logger, apiKey, model string, persona BotPersona, sender, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cfg := &genai.ClientConfig{APIKey: apiKey}
@@ -270,8 +270,7 @@ func CallGeminiText(apiKey, model string, persona BotPersona, sender, prompt str
 	if err != nil {
 		return "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
-	// Debug: masked info (do not print key itself)
-	log.Printf("[Gemini] calling model=%s keyLen=%d", model, len(apiKey))
+	logger.Info("calling model", "model", model, "keyLen", len(apiKey))
 
 	result, err := client.Models.GenerateContent(
 		ctx,
@@ -280,8 +279,7 @@ func CallGeminiText(apiKey, model string, persona BotPersona, sender, prompt str
 		nil,
 	)
 	if err != nil {
-		// Log raw error for debug (will be rate-limited by LogGeminiError elsewhere)
-		log.Printf("[Gemini][debug] SDK error: %+v", err)
+		logger.Debug("SDK error", "error", err)
 		return "", fmt.Errorf("gemini sdk error: %w", err)
 	}
 	return result.Text(), nil

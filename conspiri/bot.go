@@ -2,7 +2,6 @@ package conspiribot
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"strings"
 	"sync"
@@ -105,7 +104,7 @@ func ProcessMessage(sender, channel, message string, provider IRCProvider) {
 	}
 
 	// Deduplicated receive log (only first of near-simultaneous receives will print)
-	LogReceived(sender, message)
+	LogReceived(state.Logger, sender, message)
 
 	// Admin commands check (can be checked first universally, not bot-specific)
 	if AppConfig != nil && sender == AppConfig.AdminNick && strings.HasPrefix(message, "!bot ") {
@@ -145,7 +144,7 @@ func ProcessMessage(sender, channel, message string, provider IRCProvider) {
 			if strings.Contains(strings.ToLower(message), strings.ToLower(t)) {
 				if sender != b.Persona.Nick {
 					matched = true
-					log.Printf("[%s] Trigger present: '%s' in '%s'", b.Persona.Nick, t, message)
+					b.State.Logger.Info("trigger present", "bot", b.Persona.Nick, "trigger", t, "message", message)
 					break
 				}
 			}
@@ -244,25 +243,25 @@ func (b *Bot) generateAndSpeak(sender, prompt, channel string, provider IRCProvi
 	// Enqueue via scheduler to avoid floods
 	if b.scheduler != nil {
 		if err := b.scheduler.Enqueue(b, channel, reply, provider); err != nil {
-			log.Printf("[%s] failed to enqueue message: %v", b.Persona.Nick, err)
+			b.State.Logger.Error("failed to enqueue message", "bot", b.Persona.Nick, "error", err)
 			// fallback to direct send
 			if err := b.sendTo(channel, reply, provider); err != nil {
-				log.Printf("[%s] fallback send error: %v", b.Persona.Nick, err)
+				b.State.Logger.Error("fallback send error", "bot", b.Persona.Nick, "error", err)
 			}
 		}
 	} else {
 		if err := b.sendTo(channel, reply, provider); err != nil {
-			log.Printf("[%s] direct send error: %v", b.Persona.Nick, err)
+			b.State.Logger.Error("direct send error", "bot", b.Persona.Nick, "error", err)
 		}
 	}
 
 	// Log the bot's message (channel-specific)
 	if err := LogMessage(b.State, time.Now().Format(time.RFC3339), b.Persona.Nick, reply, channel); err != nil {
-		log.Printf("[%s] failed to log message to DB: %v", b.Persona.Nick, err)
+		b.State.Logger.Error("failed to log message to DB", "bot", b.Persona.Nick, "error", err)
 	}
 
 	// Save the bot's reply into its memory as well (helps continuity)
 	if err := SaveMemory(b.State, b.Persona.Nick, reply, channel); err != nil {
-		log.Printf("[%s] failed to save reply to memory: %v", b.Persona.Nick, err)
+		b.State.Logger.Error("failed to save reply to memory", "bot", b.Persona.Nick, "error", err)
 	}
 }

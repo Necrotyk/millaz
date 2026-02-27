@@ -2,7 +2,6 @@ package conspiribot
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 )
@@ -61,7 +60,7 @@ func (s *SpeakScheduler) loop(ctx context.Context) {
 			// Deliver message via bot's sendTo method
 			err := req.Bot.sendTo(req.Channel, req.Message, req.Provider)
 			if err != nil {
-				log.Printf("[%s] scheduler send error: %v", req.Bot.Persona.Nick, err)
+				req.Bot.State.Logger.Error("scheduler send error", "bot", req.Bot.Persona.Nick, "error", err)
 				req.Done <- err
 			} else {
 				// record that the bot spoke (per-bot cooldown)

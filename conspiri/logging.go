@@ -1,7 +1,7 @@
 package conspiribot
 
 import (
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +22,7 @@ var (
 
 // LogReceived deduplicates nearly-simultaneous receipt logs so we don't spam one line per bot.
 // It returns true if this call performed the log (first occurrence), false otherwise.
-func LogReceived(sender, message string) bool {
+func LogReceived(logger *slog.Logger, sender, message string) bool {
 	key := sender + ":" + message
 	now := time.Now()
 
@@ -40,13 +40,13 @@ func LogReceived(sender, message string) bool {
 		return false
 	}
 	recvSeen[key] = now
-	log.Printf("<Recv> <%s> %s", sender, message)
+	logger.Info("<Recv>", "sender", sender, "message", message)
 	return true
 }
 
 // LogGeminiError logs Gemini-related errors but rate-limits identical messages
 // to avoid spamming the console when the API consistently returns the same error.
-func LogGeminiError(err error) {
+func LogGeminiError(logger *slog.Logger, err error) {
 	if err == nil {
 		return
 	}
@@ -71,15 +71,15 @@ func LogGeminiError(err error) {
 	low := strings.ToLower(s)
 	switch {
 	case strings.Contains(low, "status 401") || strings.Contains(low, "unauthenticated"):
-		log.Printf("[Gemini] authentication failed (401). Check your GEMINI_API_KEY or .geminikey contents; falling back to local reply")
+		logger.Error("authentication failed (401). Check your GEMINI_API_KEY or .geminikey contents; falling back to local reply", "component", "Gemini")
 	case strings.Contains(low, "status 404") || strings.Contains(low, "not_found") || strings.Contains(low, "requested entity was not found"):
-		log.Printf("[Gemini] model or endpoint not found (404). Verify GEMINI_API_URL and model name; falling back to local reply")
+		logger.Error("model or endpoint not found (404). Verify GEMINI_API_URL and model name; falling back to local reply", "component", "Gemini")
 	default:
 		// Only log a short summary to avoid dumping large JSON bodies
 		firstLine := s
 		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 			firstLine = s[:idx]
 		}
-		log.Printf("[Gemini] %s -- falling back to local reply", firstLine)
+		logger.Error("falling back to local reply", "component", "Gemini", "error", firstLine)
 	}
 }

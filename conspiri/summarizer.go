@@ -49,7 +49,7 @@ func SummarizeAndStore(state *SwarmState, botNick string) error {
 		// prefer model indicated by h4ck3rm4n or default
 		model := "gemini-2.5-flash-lite"
 		// call Gemini
-		out, err := CallGeminiText(key, model, BotPersona{Nick: botNick, System: "Summarizer"}, "system", prompt)
+		out, err := CallGeminiText(state.Logger, key, model, BotPersona{Nick: botNick, System: "Summarizer"}, "system", prompt)
 		if err == nil && out != "" {
 			summary = out
 		}
