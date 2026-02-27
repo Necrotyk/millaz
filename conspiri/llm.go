@@ -77,7 +77,7 @@ func ExtractFacts(state *SwarmState, user, message string) {
 
 	extractorPersona := BotPersona{Nick: "System_Extractor", System: sysPrompt}
 
-	fact, err := CallGeminiText(state.Logger, key, "gemini-2.5-flash-lite", extractorPersona, maskedUser, userPrompt)
+	fact, err := CallGeminiText(state.Logger, key, "gemini-2.5-flash-lite", "", extractorPersona, maskedUser, userPrompt)
 	if err != nil || fact == "" {
 		return
 	}
@@ -237,9 +237,39 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 		model = *persona.Model
 	}
 
+	var cacheName string
+	v, ok := state.CacheRegistry.Load(persona.Nick)
+	if ok {
+		entry := v.(*CacheEntry)
+		if time.Now().After(entry.ExpiresAt.Add(-5 * time.Minute)) {
+			if entry.Mu.TryLock() {
+				go refreshCache(context.Background(), state, persona, memory)
+			}
+		} else {
+			cacheName = entry.Name
+		}
+	} else {
+		entry := &CacheEntry{}
+		actual, loaded := state.CacheRegistry.LoadOrStore(persona.Nick, entry)
+		loadedEntry := actual.(*CacheEntry)
+		if !loaded {
+			if loadedEntry.Mu.TryLock() {
+				go refreshCache(context.Background(), state, persona, memory)
+			}
+		} else {
+			if time.Now().Before(loadedEntry.ExpiresAt.Add(-5 * time.Minute)) {
+				cacheName = loadedEntry.Name
+			} else {
+				if loadedEntry.Mu.TryLock() {
+					go refreshCache(context.Background(), state, persona, memory)
+				}
+			}
+		}
+	}
+
 	if key != "" {
 		// We send the masked prompt
-		out, err := CallGeminiText(state.Logger, key, model, persona, privacy.Mask(sender), maskedPrompt)
+		out, err := CallGeminiText(state.Logger, key, model, cacheName, persona, privacy.Mask(sender), maskedPrompt)
 		if err != nil {
 			LogGeminiError(state.Logger, err)
 		} else if out != "" {
@@ -258,7 +288,7 @@ func GenerateReply(state *SwarmState, persona BotPersona, sender, prompt string,
 // CallGeminiText calls a Gemini-like REST endpoint. It expects an API key in Bearer form.
 // It returns the generated text or an error. If the environment provides GEMINI_API_URL,
 // that will be used; otherwise a sensible default is attempted (may vary by deployment).
-func CallGeminiText(logger *slog.Logger, apiKey, model string, persona BotPersona, sender, prompt string) (string, error) {
+func CallGeminiText(logger *slog.Logger, apiKey, model, cacheName string, persona BotPersona, sender, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cfg := &genai.ClientConfig{APIKey: apiKey}
@@ -272,17 +302,80 @@ func CallGeminiText(logger *slog.Logger, apiKey, model string, persona BotPerson
 	}
 	logger.Info("calling model", "model", model, "keyLen", len(apiKey))
 
+	var config *genai.GenerateContentConfig
+	if cacheName != "" {
+		config = &genai.GenerateContentConfig{
+			CachedContent: cacheName,
+		}
+	}
+
 	result, err := client.Models.GenerateContent(
 		ctx,
 		model,
 		genai.Text(prompt),
-		nil,
+		config,
 	)
 	if err != nil {
 		logger.Debug("SDK error", "error", err)
 		return "", fmt.Errorf("gemini sdk error: %w", err)
 	}
 	return result.Text(), nil
+}
+
+// Background Cache Creation Routine
+func refreshCache(ctx context.Context, state *SwarmState, persona BotPersona, memory string) {
+	v, ok := state.CacheRegistry.Load(persona.Nick)
+	if !ok {
+		return
+	}
+	entry := v.(*CacheEntry)
+	defer entry.Mu.Unlock()
+
+	ttl := 60 * time.Minute
+
+	cfg := &genai.ClientConfig{APIKey: state.APIKey}
+	if u := os.Getenv("GEMINI_API_URL"); u != "" {
+		cfg.HTTPOptions = genai.HTTPOptions{BaseURL: u}
+	}
+	client, err := genai.NewClient(ctx, cfg)
+	if err != nil {
+		state.Logger.Error("cache client creation failed", "bot", persona.Nick, "error", err)
+		return
+	}
+
+	modelName := "gemini-2.5-flash-lite"
+	if persona.Model != nil && *persona.Model != "" {
+		modelName = *persona.Model
+	}
+
+	req := &genai.CreateCachedContentConfig{
+		TTL: ttl,
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{{Text: persona.System}},
+		},
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "Memory:\n" + memory}}},
+		},
+	}
+
+	resp, err := client.Caches.Create(ctx, modelName, req)
+	if err != nil {
+		state.Logger.Error("cache creation failed", "bot", persona.Nick, "error", err)
+		return
+	}
+
+	entry.Name = resp.Name
+	entry.ExpiresAt = time.Now().Add(ttl)
+
+	_, err = state.DB.Exec(ctx,
+		`INSERT INTO conspiri_cache_state (bot_nick, cache_name, expires_at)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (bot_nick) DO UPDATE SET cache_name = $2, expires_at = $3`,
+		persona.Nick, resp.Name, entry.ExpiresAt)
+	if err != nil {
+		state.Logger.Error("failed to update db cache state", "bot", persona.Nick, "error", err)
+	}
+	state.Logger.Info("Context cached successfully for bot", "bot", persona.Nick, "cache", resp.Name)
 }
 
 // GetEmbedding returns the vector embedding for the given text using Gemini

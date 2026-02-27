@@ -84,7 +84,7 @@ func handleAsk(bot *Bot, sender, channel, query string, provider IRCProvider) {
 	bot.sendTo(channel, fmt.Sprintf("%s: Thinking...", sender), provider)
 
 	// Call API with masked data
-	reply, err := CallGeminiText(bot.State.Logger, key, "gemini-2.5-flash-lite", persona, maskedSender, maskedQuery)
+	reply, err := CallGeminiText(bot.State.Logger, key, "gemini-2.5-flash-lite", "", persona, maskedSender, maskedQuery)
 	if err != nil {
 		bot.sendTo(channel, "Error retrieving answer.", provider)
 		return
@@ -123,7 +123,7 @@ func handleRecap(bot *Bot, channel string, provider IRCProvider) {
 	prompt := fmt.Sprintf("Summarize these logs into 3 brief bullet points:\n\n%s", sb.String())
 	persona := BotPersona{Nick: bot.Persona.Nick, System: "Concise summarizer."}
 
-	summary, err := CallGeminiText(bot.State.Logger, key, "gemini-2.5-flash-lite", persona, "system", prompt)
+	summary, err := CallGeminiText(bot.State.Logger, key, "gemini-2.5-flash-lite", "", persona, "system", prompt)
 	if err != nil {
 		bot.sendTo(channel, "Failed to generate recap.", provider)
 		return

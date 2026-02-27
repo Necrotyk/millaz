@@ -12,15 +12,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type CacheEntry struct {
+	Name      string
+	ExpiresAt time.Time
+	Mu        sync.Mutex
+}
+
 type SwarmState struct {
-	DB      *pgxpool.Pool
-	DBQueue chan func()
-	Cancel  context.CancelFunc
-	APIKey  string
-	Config  *Config
-	Limiter *RateLimiter
-	Wg      *sync.WaitGroup
-	Logger  *slog.Logger
+	DB            *pgxpool.Pool
+	DBQueue       chan func()
+	Cancel        context.CancelFunc
+	APIKey        string
+	Config        *Config
+	Limiter       *RateLimiter
+	Wg            *sync.WaitGroup
+	Logger        *slog.Logger
+	CacheRegistry sync.Map // map[string]*CacheEntry
 }
 
 func NewSwarmState(db *pgxpool.Pool, ctx context.Context, apiKey string, config *Config, logger *slog.Logger) *SwarmState {
@@ -133,9 +140,34 @@ func Init(ctx context.Context, pool *pgxpool.Pool, apiKey string, config *Config
 		return nil, err
 	}
 
+	cacheStateSQL := `
+	CREATE TABLE IF NOT EXISTS conspiri_cache_state (
+		bot_nick TEXT PRIMARY KEY,
+		cache_name TEXT,
+		expires_at TIMESTAMPTZ
+	);`
+	if _, err := pool.Exec(ctx, cacheStateSQL); err != nil {
+		return nil, err
+	}
+
 	logger.Info("Database initialized for conspiri.")
 
 	state := NewSwarmState(pool, ctx, apiKey, config, logger)
+
+	rows, err := pool.Query(ctx, `SELECT bot_nick, cache_name, expires_at FROM conspiri_cache_state`)
+	if err == nil {
+		for rows.Next() {
+			var nick, cname string
+			var expires time.Time
+			if err := rows.Scan(&nick, &cname, &expires); err == nil {
+				state.CacheRegistry.Store(nick, &CacheEntry{
+					Name:      cname,
+					ExpiresAt: expires,
+				})
+			}
+		}
+		rows.Close()
+	}
 
 	// Setup AppConfig global for legacy compatibility
 	AppConfig = config
